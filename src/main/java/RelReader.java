@@ -1,13 +1,17 @@
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.Scanner;
 
+import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.factory.GraphDatabaseFactory;
+import org.neo4j.graphdb.index.Index;
 
 
 /*
@@ -16,35 +20,55 @@ import org.neo4j.graphdb.factory.GraphDatabaseFactory;
  * 
  */
 public class RelReader {
-  GraphDatabaseService graphDb;
-  String DB_PATH = "";
+  File DB_DIR = null;
   
-  private static enum RelTypes implements RelationshipType{
+  public RelReader() throws IOException{
+    DB_DIR = Files.createTempDirectory("neo4j").toFile();
+  }
+  
+  public static enum RelTypes implements RelationshipType{
     ISA, INVERSE_ISA
   }
   
-  public void buildGraph(String relsFile) throws FileNotFoundException{
-    graphDb = new GraphDatabaseFactory().newEmbeddedDatabase(DB_PATH);
+  public GraphDatabaseService buildGraph(String relsFile) throws FileNotFoundException{
+    GraphDatabaseService graphDb = new GraphDatabaseFactory().newEmbeddedDatabase(DB_DIR);
     registerShutdownHook(graphDb);
+    Index<Node> index = null;
+    Index<Relationship> rIndex = null; 
     
     try(Scanner scanner = new Scanner(new File(relsFile)); Transaction tx = graphDb.beginTx(); ) {
+      index = graphDb.index().forNodes("nodes");
+      rIndex = graphDb.index().forRelationships("relationships");
       while(scanner.hasNextLine()){
-        String[] fields = scanner.nextLine().trim().split("|");
+        String[] fields = scanner.nextLine().trim().split("\\|");
         String cui1 = fields[0];
         String cui2 = fields[4];
         String relType = fields[7];
         assert (relType.equals("isa"));
 
-        Node arg1 = graphDb.createNode();
-        arg1.setProperty("cui", cui1);
-        Node arg2 = graphDb.createNode();
-        arg2.setProperty("cui", cui2);
+        Node arg1 = createOrFindNode(graphDb, cui1, fields[10]);
+        Node arg2 = createOrFindNode(graphDb, cui2, fields[10]);
+        
+        index.putIfAbsent(arg1, "cui", cui1);
+        index.putIfAbsent(arg2, "cui", cui2);
+        
         Relationship rel = arg1.createRelationshipTo(arg2, RelTypes.ISA);
         Relationship rel2 = arg2.createRelationshipTo(arg1, RelTypes.INVERSE_ISA);
-        
-        tx.success();
+        rIndex.add(rel, "category", RelTypes.ISA);
+        rIndex.add(rel2, "category", RelTypes.INVERSE_ISA);
       }
+      tx.success();
     }
+    return graphDb;
+  }
+  
+  private Node createOrFindNode(GraphDatabaseService graphDb, String cui, String label){
+    Node node = graphDb.findNode(DynamicLabel.label(label), "cui", cui);
+    if(node == null){
+      node = graphDb.createNode(DynamicLabel.label(label));
+      node.setProperty("cui", cui);
+    }
+    return node;
   }
   
   private void registerShutdownHook( final GraphDatabaseService graphDb )
@@ -60,6 +84,13 @@ public class RelReader {
               graphDb.shutdown();
           }
       } );
+  }
+  
+  public static void main(String[] args) throws IOException{
+    RelReader reader = new RelReader();
+    GraphDatabaseService db = reader.buildGraph(args[0]);
+    
+    
   }
 }
 
