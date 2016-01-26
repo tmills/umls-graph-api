@@ -1,7 +1,10 @@
+package org.chboston.cnlp.graphapi;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.chboston.cnlp.graphbuilder.RelReader;
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;

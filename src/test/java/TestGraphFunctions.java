@@ -1,3 +1,4 @@
+import org.chboston.cnlp.graphapi.GraphFunctions;
 import org.junit.Assert;
 import org.junit.Test;
 

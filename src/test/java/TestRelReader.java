@@ -1,6 +1,7 @@
 import java.io.File;
 import java.io.IOException;
 
+import org.chboston.cnlp.graphbuilder.RelReader;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
