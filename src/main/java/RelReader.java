@@ -1,17 +1,24 @@
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
 
 import org.neo4j.graphdb.DynamicLabel;
+import org.neo4j.graphdb.DynamicRelationshipType;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.graphdb.Label;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Relationship;
 import org.neo4j.graphdb.RelationshipType;
 import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.factory.GraphDatabaseFactory;
 import org.neo4j.graphdb.index.Index;
+import org.neo4j.unsafe.batchinsert.BatchInserter;
+import org.neo4j.unsafe.batchinsert.BatchInserters;
 
 
 /*
@@ -23,74 +30,129 @@ public class RelReader {
   File DB_DIR = null;
   
   public RelReader() throws IOException{
-    DB_DIR = Files.createTempDirectory("neo4j").toFile();
+    this("neo4j/");
   }
   
+  public RelReader(String location){
+    DB_DIR = new File(location);
+  }
+  
+  public static final String CUI_PROPERTY = "cui";
+  
+  public static enum DictLabels implements Label{
+    Concept
+  }
   public static enum RelTypes implements RelationshipType{
     ISA, INVERSE_ISA
   }
   
-  public GraphDatabaseService buildGraph(String relsFile) throws FileNotFoundException{
-    GraphDatabaseService graphDb = new GraphDatabaseFactory().newEmbeddedDatabase(DB_DIR);
-    registerShutdownHook(graphDb);
-    Index<Node> index = null;
-    Index<Relationship> rIndex = null; 
-    
-    try(Scanner scanner = new Scanner(new File(relsFile)); Transaction tx = graphDb.beginTx(); ) {
-      index = graphDb.index().forNodes("nodes");
-      rIndex = graphDb.index().forRelationships("relationships");
-      while(scanner.hasNextLine()){
-        String[] fields = scanner.nextLine().trim().split("\\|");
-        String cui1 = fields[0];
-        String cui2 = fields[4];
-        String relType = fields[7];
-        assert (relType.equals("isa"));
+  public void batchBuildGraph(File umlsDir, String tuisFilename, String... sources) throws IOException{
+    Set<String> tuiSet = getTuisFromFile(tuisFilename);
+    Set<String> cuiSet = getCuisFromUmls(umlsDir, tuiSet);
+    Set<String> sourceSet = getSourceSet(sources);
 
-        Node arg1 = createOrFindNode(graphDb, cui1, fields[10]);
-        Node arg2 = createOrFindNode(graphDb, cui2, fields[10]);
-        
-        index.putIfAbsent(arg1, "cui", cui1);
-        index.putIfAbsent(arg2, "cui", cui2);
-        
-        Relationship rel = arg1.createRelationshipTo(arg2, RelTypes.ISA);
-        Relationship rel2 = arg2.createRelationshipTo(arg1, RelTypes.INVERSE_ISA);
-        rIndex.add(rel, "category", RelTypes.ISA);
-        rIndex.add(rel2, "category", RelTypes.INVERSE_ISA);
-      }
-      tx.success();
-    }
-    return graphDb;
-  }
-  
-  private Node createOrFindNode(GraphDatabaseService graphDb, String cui, String label){
-    Node node = graphDb.findNode(DynamicLabel.label(label), "cui", cui);
-    if(node == null){
-      node = graphDb.createNode(DynamicLabel.label(label));
-      node.setProperty("cui", cui);
-    }
-    return node;
-  }
-  
-  private void registerShutdownHook( final GraphDatabaseService graphDb )
-  {
-      // Registers a shutdown hook for the Neo4j instance so that it
-      // shuts down nicely when the VM exits (even if you "Ctrl-C" the
-      // running application).
-      Runtime.getRuntime().addShutdownHook( new Thread()
-      {
-          @Override
-          public void run()
-          {
-              graphDb.shutdown();
+    BatchInserter inserter = null;
+    Label conceptLabel = DictLabels.Concept;
+    Map<String, Object> properties = new HashMap<>();
+    
+    try{
+      inserter = BatchInserters.inserter( DB_DIR );
+      inserter.createDeferredSchemaIndex( conceptLabel ).on( CUI_PROPERTY ).create();
+
+      File relsFile = new File(umlsDir, "MRREL.RRF");
+      int line = 0;
+      Map<String,Long> insertedCuis = new HashMap<>();
+
+      try( Scanner scanner = new Scanner(relsFile) ) {
+        System.out.println("Finding relations between CUIs in cTAKES from selected sources...");
+        while(scanner.hasNextLine()){
+          if(++line % 10000 == 0){
+            System.out.print(".");
           }
-      } );
+          String[] fields = scanner.nextLine().trim().split("\\|");
+          String cui1 = fields[0];
+          String cui2 = fields[4];
+          // both cuis in relation must be of interest to us:
+          if(!cuiSet.contains(cui1) || !cuiSet.contains(cui2)) continue;
+
+          String relType = fields[7];
+          // only interested in isa for now
+          if(!relType.equals("isa")) continue;
+
+          // only use specified dictionaries (e.g., SNOMEDCT_US)
+          if(!sourceSet.contains(fields[10])) continue;
+
+          long id1,id2;
+          if(!insertedCuis.containsKey(cui1)){
+            properties.put("cui", cui1);
+            long id = inserter.createNode(properties, conceptLabel);
+            insertedCuis.put(cui1, id);
+          }
+          id1 = insertedCuis.get(cui1);
+
+          if(!insertedCuis.containsKey(cui2)){
+            properties.put("cui", cui2);
+            long id = inserter.createNode(properties, conceptLabel);
+            insertedCuis.put(cui2, id);
+          }
+          id2 = insertedCuis.get(cui2);
+
+          inserter.createRelationship(id2, id1, RelReader.RelTypes.ISA, null);            
+        }
+      }
+    }
+    finally{
+      if ( inserter != null ){
+        inserter.shutdown();
+      }
+    }
+  }
+    
+  private Set<String> getSourceSet(String[] sources) {
+    Set<String> sourceSet = new HashSet<>();
+    for(String source : sources){
+      sourceSet.add(source);
+    }
+    return sourceSet;
+  }
+
+  private Set<String> getCuisFromUmls(File umlsDir, Set<String> tuiSet) throws FileNotFoundException {
+    System.out.println("Filtering UMLS to CUIs with cTAKES-included TUIs");
+    Set<String> cuis = new HashSet<>();
+    int lines = 0;
+    File mrSty = new File(umlsDir, "MRSTY.RRF");
+    try(Scanner scanner = new Scanner(mrSty)){
+      String line = null;
+      while(scanner.hasNextLine()){
+        if(++lines % 10000 == 0) System.out.print('.');
+        line = scanner.nextLine().trim();
+        String[] fields = line.split("\\|");
+        if(tuiSet.contains(fields[1])){
+          cuis.add(fields[0]);
+        }
+      }
+      System.out.println();
+    }
+    return cuis;
+  }
+
+  private Set<String> getTuisFromFile(String tuisFilename) throws FileNotFoundException {
+    Set<String> tuis = new HashSet<>();
+    try(Scanner scanner = new Scanner(new File(tuisFilename))){
+      String line = null;
+      while(scanner.hasNextLine()){
+        line = scanner.nextLine().trim();
+        if(line.startsWith("T")){
+          tuis.add(line);
+        }
+      }
+    }
+    return tuis;
   }
   
   public static void main(String[] args) throws IOException{
     RelReader reader = new RelReader();
-    GraphDatabaseService db = reader.buildGraph(args[0]);
-    
-    
+    reader.batchBuildGraph(new File("/home/tmill/mnt/r/temp/2015AB/META"), "CtakesAllTuis.txt", "SNOMEDCT_US");
   }
 }
 
