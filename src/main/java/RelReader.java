@@ -151,8 +151,13 @@ public class RelReader {
   }
   
   public static void main(String[] args) throws IOException{
+    if(args.length < 1){
+      System.err.println("Error: One required argument: UMLS META directory.");
+      System.exit(-1);
+    }
+    
     RelReader reader = new RelReader();
-    reader.batchBuildGraph(new File("/home/tmill/mnt/r/temp/2015AB/META"), "CtakesAllTuis.txt", "SNOMEDCT_US");
+    reader.batchBuildGraph(new File(args[0]), "CtakesAllTuis.txt", "SNOMEDCT_US");
   }
 }
 
