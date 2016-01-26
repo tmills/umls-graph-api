@@ -2,9 +2,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.junit.Assert;
 import org.neo4j.graphdb.Direction;
-import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.Node;
 import org.neo4j.graphdb.Path;
@@ -85,10 +83,8 @@ public class GraphFunctions {
           .evaluator(Evaluators.includeWhereEndNodeIs(cui2Node));
 
       Traverser traverser = td.traverse(cui1Node);
-      for(Path path : traverser){
-        // if we have any paths match is true
+      if(traverser.iterator().hasNext()){
         match = true;
-        break;
       }
       tx.success();
     }
