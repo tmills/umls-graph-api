@@ -111,4 +111,29 @@ public class GraphFunctions {
     }
     return match;
   }
+  
+  public static int minDistance(String cui1, String cui2){
+    int distance = -1;
+    try ( Transaction tx = graphDb.beginTx() ){
+      Node cui1Node = graphDb.findNode(RelReader.DictLabels.Concept, RelReader.CUI_PROPERTY, cui1);
+      Node cui2Node = graphDb.findNode(RelReader.DictLabels.Concept, RelReader.CUI_PROPERTY, cui2);
+      if(cui1Node == null || cui2Node == null) return distance;
+      
+      TraversalDescription td = graphDb.traversalDescription()
+          .breadthFirst()
+          .relationships(RelReader.RelTypes.ISA, Direction.OUTGOING)
+          .evaluator(Evaluators.excludeStartPosition())
+          .evaluator(Evaluators.includeWhereEndNodeIs(cui2Node));
+
+      Traverser traverser = td.traverse(cui1Node);
+      for(Path path : traverser){
+        int len = path.length();
+        if(distance == -1 || len < distance){
+          distance = len;
+        }
+      }
+      tx.success();
+    }
+    return distance;
+  }
 }
