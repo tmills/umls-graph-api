@@ -19,9 +19,12 @@
 package org.chboston.cnlp.graphapi;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.io.FileUtils;
 import org.chboston.cnlp.graphbuilder.RelReader;
 import org.neo4j.graphdb.Direction;
 import org.neo4j.graphdb.GraphDatabaseService;
@@ -37,7 +40,15 @@ public class GraphFunctions {
   static GraphDatabaseService graphDb = null;
   
   static{
-    graphDb = new GraphDatabaseFactory().newEmbeddedDatabase(new File("neo4j"));
+    try {
+      File tempDir = Files.createTempDirectory("neo4j").toFile();
+      FileUtils.copyDirectory(new File("neo4j"), tempDir);
+      graphDb = new GraphDatabaseFactory().newEmbeddedDatabase(tempDir);
+      FileUtils.forceDeleteOnExit(tempDir);
+      
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }    
   }
   
   public static List<String> getHypernyms(String cui){
